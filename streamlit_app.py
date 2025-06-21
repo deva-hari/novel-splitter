@@ -4,6 +4,8 @@ import zipfile
 import chardet
 import streamlit as st
 from io import BytesIO
+import googletrans
+from googletrans import Translator
 
 
 # --- Utility ---
@@ -53,6 +55,15 @@ def split_novel(text):
     }
 
 
+def try_decode(raw, encodings):
+    for enc in encodings:
+        try:
+            return raw.decode(enc), enc
+        except Exception:
+            continue
+    return None, None
+
+
 def main():
     st.set_page_config(page_title="Chinese Novel Splitter (Python)", page_icon="📖")
     st.title("📖 Chinese Novel Splitter (Python)")
@@ -63,24 +74,40 @@ def main():
     - The app will split chapters and provide a ZIP for download.
     """
     )
+    translate_titles = st.checkbox(
+        "Translate chapter titles to English for filenames?", value=False
+    )
     uploaded_file = st.file_uploader("Upload your novel .txt file", type=["txt"])
+    text, encoding, encoding_confirmed = None, None, False
     if uploaded_file:
         raw = uploaded_file.read()
         result = chardet.detect(raw)
-        st.info(f"Detected encoding: {result['encoding']}")
-        is_utf8 = (
-            st.radio("Is your file UTF-8 encoded?", ("Yes", "No"), horizontal=True)
-            == "Yes"
+        encoding = result["encoding"] or "utf-8"
+        st.info(f"Detected encoding: {encoding}")
+        # Try detected encoding, then utf-8, then common Chinese encodings
+        text, used_encoding = try_decode(
+            raw, [encoding, "utf-8", "gbk", "gb2312", "big5"]
         )
-        try:
-            if is_utf8:
-                text = raw.decode("utf-8")
+        if text is not None:
+            encoding = used_encoding
+            encoding_confirmed = True
+        else:
+            is_utf8 = st.radio(
+                "Automatic encoding failed. Is your file UTF-8 encoded?",
+                ("Yes", "No"),
+                horizontal=True,
+            )
+            if is_utf8 == "Yes":
+                text, used_encoding = try_decode(raw, ["utf-8"])
             else:
-                try:
-                    text = raw.decode("gbk")
-                except:
-                    text = raw.decode("gb2312")
-                # Offer re-encoded file for download
+                text, used_encoding = try_decode(raw, ["gbk", "gb2312", "big5"])
+            if text is not None:
+                encoding = used_encoding
+                encoding_confirmed = True
+            else:
+                st.error("Failed to decode file with all attempted encodings.")
+        if encoding_confirmed:
+            if encoding.lower() != "utf-8":
                 utf8_bytes = text.encode("utf-8")
                 st.download_button(
                     "Download UTF-8 Re-encoded File",
@@ -88,26 +115,49 @@ def main():
                     file_name=uploaded_file.name.replace(".txt", "_utf8.txt"),
                     mime="text/plain",
                 )
-            result = split_novel(text)
-            meta = result["meta"]
-            chapters = result["chapters"]
-            zip_buffer = BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-                info = f"书名: {meta['bookName']}\n作者: {meta['author']}\n更新至: {meta['latestChapter']}\n简介:\n{meta['summary']}\n"
-                zipf.writestr("info.txt", info)
-                for ch in chapters:
-                    fname = sanitize_filename(ch["title"]) + ".txt"
-                    content = f"{ch['title']}\n{ch['body']}\n"
-                    zipf.writestr(fname, content)
-            st.success(f"Split {len(chapters)} chapters! Download your zip below.")
-            st.download_button(
-                label="Download Chapters ZIP",
-                data=zip_buffer.getvalue(),
-                file_name=f"{meta['bookName']}_split.zip",
-                mime="application/zip",
-            )
-        except Exception as e:
-            st.error(f"Error: {e}")
+            if st.button("Split Book"):
+                try:
+                    result = split_novel(text)
+                    meta = result["meta"]
+                    chapters = result["chapters"]
+                    zip_buffer = BytesIO()
+                    translator = Translator() if translate_titles else None
+                    if translate_titles:
+                        try:
+                            translated_book_name = sanitize_filename(
+                                translator.translate(
+                                    meta["bookName"], src="zh-cn", dest="en"
+                                ).text
+                            )
+                        except Exception:
+                            translated_book_name = sanitize_filename(meta["bookName"])
+                    else:
+                        translated_book_name = sanitize_filename(meta["bookName"])
+                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+                        info = f"书名: {meta['bookName']}\n作者: {meta['author']}\n更新至: {meta['latestChapter']}\n简介:\n{meta['summary']}\n"
+                        zipf.writestr("info.txt", info)
+                        for ch in chapters:
+                            if translate_titles:
+                                try:
+                                    translated = translator.translate(
+                                        ch["title"], src="zh-cn", dest="en"
+                                    ).text
+                                    fname = sanitize_filename(translated) + ".txt"
+                                except Exception:
+                                    fname = sanitize_filename(ch["title"]) + ".txt"
+                            else:
+                                fname = sanitize_filename(ch["title"]) + ".txt"
+                            content = f"{ch['title']}\n{ch['body']}\n"
+                            zipf.writestr(fname, content)
+                    st.success(f"Split {len(chapters)} chapters! Download your zip below.")
+                    st.download_button(
+                        label="Download Chapters ZIP",
+                        data=zip_buffer.getvalue(),
+                        file_name=f"{translated_book_name}_split.zip",
+                        mime="application/zip",
+                    )
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
 
 if __name__ == "__main__":
