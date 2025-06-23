@@ -12,13 +12,15 @@ CONFIG_PATH = "novel_splitter_config.json"
 # --- Logger Setup ---
 LOG_LEVELS = ["NONE", "ERROR", "WARNING", "INFO", "DEBUG"]
 
+
 def log(msg, level="INFO"):
     level = level.upper()
     if log_level == "NONE":
         return
-    allowed_levels = LOG_LEVELS[LOG_LEVELS.index(log_level):]
+    allowed_levels = LOG_LEVELS[LOG_LEVELS.index(log_level) :]
     if level in allowed_levels:
         getattr(logging, level.lower(), logging.info)(msg)
+
 
 def setup_logging(selected_level):
     logging.basicConfig(
@@ -34,7 +36,7 @@ def load_config():
         "book_title_marker": r"(?:『)?(?P<title>[^\n/／]+)[/／](?:作者[:：])?(?P<author>[^\n』]+)(?:』)?|^(?P<title_alt>.+)[\r\n]+作者[:：](?P<author_alt>.+)",
         "summary_marker": r"(?:内容简介|简介)[:：]?\s*(?P<summary>.+?)(?=\n+第[\d一二三四五六七八九十百千万零〇]+章|\n*$)",
         "log_level": "INFO",
-        "translate_titles": False
+        "translate_titles": False,
     }
     if os.path.exists(CONFIG_PATH):
         try:
@@ -83,7 +85,9 @@ def split_novel(text, chapter_marker, book_title_marker, summary_marker):
         author = "UnknownAuthor"
 
     summary_match = re.search(summary_marker, text, re.S)
-    summary = summary_match.groupdict().get("summary", "").strip() if summary_match else ""
+    summary = (
+        summary_match.groupdict().get("summary", "").strip() if summary_match else ""
+    )
     if not summary:
         summary = "No summary available."
         log("Summary not found.", "WARNING")
@@ -129,11 +133,21 @@ def main():
 
     # --- Sidebar Configuration ---
     st.sidebar.header("⚙️ Configuration")
-    new_log_level = st.sidebar.selectbox("Log Level", LOG_LEVELS, index=LOG_LEVELS.index(config["log_level"]))
-    config["translate_titles"] = st.sidebar.checkbox("Translate chapter titles to English?", value=config["translate_titles"])
-    config["chapter_marker"] = st.sidebar.text_area("Chapter Marker (Regex)", config["chapter_marker"], height=70)
-    config["book_title_marker"] = st.sidebar.text_area("Book Title Marker (Regex)", config["book_title_marker"], height=70)
-    config["summary_marker"] = st.sidebar.text_area("Summary Marker (Regex)", config["summary_marker"], height=70)
+    new_log_level = st.sidebar.selectbox(
+        "Log Level", LOG_LEVELS, index=LOG_LEVELS.index(config["log_level"])
+    )
+    config["translate_titles"] = st.sidebar.checkbox(
+        "Translate chapter titles to English?", value=config["translate_titles"]
+    )
+    config["chapter_marker"] = st.sidebar.text_area(
+        "Chapter Marker (Regex)", config["chapter_marker"], height=70
+    )
+    config["book_title_marker"] = st.sidebar.text_area(
+        "Book Title Marker (Regex)", config["book_title_marker"], height=70
+    )
+    config["summary_marker"] = st.sidebar.text_area(
+        "Summary Marker (Regex)", config["summary_marker"], height=70
+    )
 
     if st.sidebar.button("💾 Save Config"):
         config["log_level"] = new_log_level
@@ -148,7 +162,9 @@ def main():
 
     if uploaded_file:
         raw = uploaded_file.read()
-        text, encoding = try_decode_until_marker(raw, encodings_to_try, config["chapter_marker"])
+        text, encoding = try_decode_until_marker(
+            raw, encodings_to_try, config["chapter_marker"]
+        )
         if not text:
             st.error("❌ Failed to decode text. Adjust encoding or markers.")
             return
@@ -169,52 +185,105 @@ def main():
 
         with st.expander("📖 Summary Match", expanded=False):
             summary_match = re.search(config["summary_marker"], text, re.S)
-            summary = summary_match.groupdict().get("summary", "").strip() if summary_match else ""
+            summary = (
+                summary_match.groupdict().get("summary", "").strip()
+                if summary_match
+                else ""
+            )
             if summary:
                 st.markdown("**Preview:**")
-                st.code(summary[:500] + ("..." if len(summary) > 500 else ""), language="markdown")
+                st.code(
+                    summary[:500] + ("..." if len(summary) > 500 else ""),
+                    language="markdown",
+                )
             else:
                 st.warning("No summary matched.")
 
         with st.expander("📚 Chapter Title Matches", expanded=False):
             chapter_regex = re.compile(config["chapter_marker"], re.M)
             matches = list(chapter_regex.finditer(text))
+            total_chapters = len(matches)
             if matches:
                 for i, match in enumerate(matches[:3]):
                     st.markdown(f"**Match {i+1}:** `{match.group('full')}`")
-                if len(matches) > 3:
-                    st.info(f"Showing 3 of {len(matches)} matches...")
+                if total_chapters > 3:
+                    st.info(f"Showing 3 of {total_chapters} matches...")
+                st.success(f"Total chapters found: {total_chapters}")
             else:
                 st.warning("No chapter markers matched.")
 
+        # --- Chapter Range Selection ---
+        chapter_range_mode = st.radio(
+            "Split all chapters or select a range?",
+            ("All chapters", "Select range"),
+            horizontal=True,
+        )
+        from_chapter, to_chapter = 1, total_chapters
+        if chapter_range_mode == "Select range" and total_chapters > 0:
+            from_chapter = st.number_input(
+                "From chapter (number)",
+                min_value=1,
+                max_value=total_chapters,
+                value=1,
+                step=1,
+            )
+            to_chapter = st.number_input(
+                "To chapter (number)",
+                min_value=from_chapter,
+                max_value=total_chapters,
+                value=total_chapters,
+                step=1,
+            )
+
         if encoding.lower() != "utf-8":
-            st.download_button("⬇ Download UTF-8 Re-encoded File", data=text.encode("utf-8"),
-                               file_name=uploaded_file.name.replace(".txt", "_utf8.txt"),
-                               mime="text/plain")
+            st.download_button(
+                "⬇ Download UTF-8 Re-encoded File",
+                data=text.encode("utf-8"),
+                file_name=uploaded_file.name.replace(".txt", "_utf8.txt"),
+                mime="text/plain",
+            )
 
         if st.button("📚 Split Book"):
             try:
-                result = split_novel(text, config["chapter_marker"], config["book_title_marker"], config["summary_marker"])
+                result = split_novel(
+                    text,
+                    config["chapter_marker"],
+                    config["book_title_marker"],
+                    config["summary_marker"],
+                )
                 meta = result["meta"]
                 chapters = result["chapters"]
                 translator = Translator() if config["translate_titles"] else None
 
+                # --- Filter chapters by range if needed ---
+                if chapter_range_mode == "Select range" and total_chapters > 0:
+                    chapters = chapters[int(from_chapter) - 1 : int(to_chapter)]
+
                 book_folder = sanitize_filename(meta["bookName"])
                 if translator:
                     try:
-                        book_folder = sanitize_filename(translator.translate(meta["bookName"], src="zh-cn", dest="en").text)
+                        book_folder = sanitize_filename(
+                            translator.translate(
+                                meta["bookName"], src="zh-cn", dest="en"
+                            ).text
+                        )
                         log(f"Translated book folder: {book_folder}", "INFO")
                     except Exception as e:
                         log(f"Title translation failed: {e}", "WARNING")
 
                 zip_buffer = BytesIO()
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-                    zipf.writestr("info.txt", f"书名: {meta['bookName']}\n作者: {meta['author']}\n更新至: {meta['latestChapter']}\n简介:\n{meta['summary']}\n")
+                    zipf.writestr(
+                        "info.txt",
+                        f"书名: {meta['bookName']}\n作者: {meta['author']}\n更新至: {meta['latestChapter']}\n简介:\n{meta['summary']}\n",
+                    )
                     for ch in chapters:
                         try:
                             fname = ch["title"]
                             if translator:
-                                fname = translator.translate(fname, src="zh-cn", dest="en").text
+                                fname = translator.translate(
+                                    fname, src="zh-cn", dest="en"
+                                ).text
                             fname = sanitize_filename(fname) + ".txt"
                         except Exception as e:
                             log(f"Chapter title translation failed: {e}", "WARNING")
@@ -224,8 +293,12 @@ def main():
                         log(f"Wrote: {fname}", "DEBUG")
 
                 st.success(f"✅ {len(chapters)} chapters split. Ready for download.")
-                st.download_button("⬇ Download Chapters ZIP", data=zip_buffer.getvalue(),
-                                   file_name=f"{book_folder}_split.zip", mime="application/zip")
+                st.download_button(
+                    "⬇ Download Chapters ZIP",
+                    data=zip_buffer.getvalue(),
+                    file_name=f"{book_folder}_split.zip",
+                    mime="application/zip",
+                )
 
             except Exception as e:
                 log(f"Splitting error: {e}", "ERROR")
